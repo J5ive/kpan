@@ -21,7 +21,7 @@ type Kpan struct {
 	Token
 	UserId     int64
 	ChargedDir string
-	Root       string // app_folder or kuanpan
+	Root       string // app_folder or kuaipan
 	host       string // upload url
 }
 
@@ -91,7 +91,7 @@ type DirInfo struct {
 	Path string `json:"path"`
 	Root string `json:"root"`
 
-	//Hash string
+	Hash       string     `json:"hash,omitempty"`
 	FileId     string     `json:"file_id,omitempty"`
 	Type       string     `json:"type,omitempty"`
 	Size       int        `json:"size,omitempty"`
@@ -298,7 +298,10 @@ type UploadResult struct {
 	FileId     string `json:"file_id"`
 	Type       string `json:"type"`
 	Rev        string `json:"rev"`
-	Size       int    `json:"size"`
+	Size       string `json:"size"`	// 文档中是int, 但实际返回 string 
+	// Stat string  `json:"stat"`	// 文档中无, 成功返回 OK
+	// Url string  `json:"url"`		// 文档中无
+
 	CreateTime string `json:"create_time,omitempty"`
 	ModifyTime string `json:"modify_time,omitempty"`
 	IsDeleted  bool   `json:"is_deleted,omitempty"`
@@ -325,7 +328,7 @@ func (p *Kpan) newUploadRequest(host, pathname string, data []byte) *http.Reques
 	part.Write(data)
 	w.Close()
 
-	req, _ := http.NewRequest("POST", host + addSep(pathname), buf)
+	req, _ := http.NewRequest("POST", join(host, "/1/fileops/upload_file"), buf)
 	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("Content-Type", w.FormDataContentType())
 //	req.Header.Set("Content-Length", strconv.Itoa(buf.Len()))
@@ -340,6 +343,19 @@ func btoa(b bool) string {
 		return "True"
 	}
 	return "False"
+}
+
+func join(host, pathname string) string {
+	if len(pathname) == 0 {
+		return host
+	}
+	if host[len(host)-1] != '/' {
+		return host + addSep(pathname)
+	}
+	if pathname[0] == '/' {
+		return host + pathname[1:]
+	}
+	return host + pathname
 }
 
 // 上传

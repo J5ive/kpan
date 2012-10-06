@@ -51,7 +51,7 @@ func (c *DownClient) Cookies(u *url.URL) []*http.Cookie {
 	return c.cookies
 }
 
-// GET api.
+// GET api operation.
 func (t *Token) Get(uri string, params map[string]string) ([]byte, error) {
 	if params == nil {
 		params = make(map[string]string)
@@ -65,7 +65,7 @@ func (t *Token) Get(uri string, params map[string]string) ([]byte, error) {
 	return t.httpGet(http.DefaultClient, uri, params)
 }
 
-// GET api for download operation.
+// GET api operation for download.
 func (t *Token) GetFile(uri string, params map[string]string) ([]byte, error) {
 	if params == nil {
 		params = make(map[string]string)
@@ -91,7 +91,7 @@ func (t *Token) DoJson(req *http.Request, params map[string]string, obj interfac
 	if params == nil {
 		params = make(map[string]string)
 	}
-	t.Sign(req.Method, req.URL.RequestURI(), params)
+	t.Sign(req.Method, req.URL.String(), params)
 	return t.httpDoJson(req, params, obj)
 }
 
@@ -212,6 +212,7 @@ func readFormBody(resp *http.Response, obj interface{}) error {
 	if err != nil {
 		return err
 	}
+	// println(string(data))
 
 	if resp.StatusCode != 200 {
 		msg := new(ErrorMsg)
