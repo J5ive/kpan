@@ -87,11 +87,11 @@ func (t *Token) GetJson(uri string, params map[string]string, obj interface{}) e
 }
 
 // specail api operation, for upload
-func (t *Token) DoJson(req *http.Request, params map[string]string, obj interface{}) error {
+func (t *Token) DoJson(req *http.Request, uri string, params map[string]string, obj interface{}) error {
 	if params == nil {
 		params = make(map[string]string)
 	}
-	t.Sign(req.Method, req.URL.String(), params)
+	t.Sign(req.Method, uri, params)
 	return t.httpDoJson(req, params, obj)
 }
 

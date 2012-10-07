@@ -76,7 +76,7 @@ type AccountInfo struct {
 	QuotaTotal  int64  `json:"quota_total"`
 	QuotaUsed   int64  `json:"quota_used"`
 
-	QuotoRecycled int64 `json:"quota_recycled,omitempty"`
+	QuotoRecycled int64 `json:"quota_recycled"`
 }
 
 // 查看用户信息
@@ -91,16 +91,16 @@ type DirInfo struct {
 	Path string `json:"path"`
 	Root string `json:"root"`
 
-	Hash       string     `json:"hash,omitempty"`
-	FileId     string     `json:"file_id,omitempty"`
-	Type       string     `json:"type,omitempty"`
-	Size       int        `json:"size,omitempty"`
-	CreateTime string     `json:"create_time,omitempty"`
-	ModifyTime string     `json:"modify_time,omitempty"`
-	Name       string     `json:"name,omitempty"`
-	Rev        string     `json:"rev,omitempty"`
-	IsDeleted  bool       `json:"is_deleted,omitempty"`
-	Files      []FileInfo `json:"files,omitempty"`
+	Hash       string     `json:"hash"`
+	FileId     string     `json:"file_id"`
+	Type       string     `json:"type"`
+	Size       int        `json:"size"`
+	CreateTime string     `json:"create_time"`
+	ModifyTime string     `json:"modify_time"`
+	Name       string     `json:"name"`
+	Rev        string     `json:"rev"`
+	IsDeleted  bool       `json:"is_deleted"`
+	Files      []FileInfo `json:"files"`
 }
 
 type FileInfo struct {
@@ -112,7 +112,7 @@ type FileInfo struct {
 	Name       string `json:"name"`
 	IsDeleted  bool   `json:"is_deleted"`
 
-	Rev string `json:"rev,omitempty"`
+	Rev string `json:"rev"`
 }
 
 // 获取单个文件，文件夹信息
@@ -136,7 +136,7 @@ func addSep(pathname string) string {
 
 type ShareInfo struct {
 	Url        string `json:"url"`
-	AccessCode string `json:"access_code,omitempty"`
+	AccessCode string `json:"access_code"`
 }
 
 // 创建并获取一个文件的分享链接
@@ -159,8 +159,8 @@ func (p *Kpan) Share(pathname, displayName, accessCode string) (*ShareInfo, erro
 
 type CreateResult struct {
 	FileId string `json:"file_id"`
-	Path   string `json:"path,omitempty"`
-	Root   string `json:"root,omitempty"`
+	Path   string `json:"path"`
+	Root   string `json:"root"`
 }
 
 // 新建文件夹
@@ -298,20 +298,22 @@ type UploadResult struct {
 	FileId     string `json:"file_id"`
 	Type       string `json:"type"`
 	Rev        string `json:"rev"`
-	Size       string `json:"size"`	// 文档中是int, 但实际返回 string 
+	Size       int    `json:"size,string"`	// 文档中是int, 但实际返回 string 
 	// Stat string  `json:"stat"`	// 文档中无, 成功返回 OK
 	// Url string  `json:"url"`		// 文档中无
 
-	CreateTime string `json:"create_time,omitempty"`
-	ModifyTime string `json:"modify_time,omitempty"`
-	IsDeleted  bool   `json:"is_deleted,omitempty"`
+	CreateTime string `json:"create_time"`
+	ModifyTime string `json:"modify_time"`
+	IsDeleted  bool   `json:"is_deleted"`
 }
 
 // 根据 UploadLocate 得到的 host url 上传 (2nd step of openapi)
 func (p *Kpan) UploadTo(host, pathname string, overwrite bool, data []byte) (res *UploadResult, err error) {
 	res = new(UploadResult)
+	uri := join(host, "/1/fileops/upload_file")
 	err = p.DoJson(
-		p.newUploadRequest(host, pathname, data),
+		p.newUploadRequest(uri, pathname, data),
+		uri,
 		map[string]string{
 			"overwrite": btoa(overwrite),
 			"root":      p.Root,
@@ -321,20 +323,19 @@ func (p *Kpan) UploadTo(host, pathname string, overwrite bool, data []byte) (res
 	return
 }
 
-func (p *Kpan) newUploadRequest(host, pathname string, data []byte) *http.Request {
+func (p *Kpan) newUploadRequest(uri, pathname string, data []byte) *http.Request {
 	buf := &bytes.Buffer{}
 	w := multipart.NewWriter(buf)
 	part, _ := w.CreateFormFile("file", pathname)
 	part.Write(data)
 	w.Close()
 
-	req, _ := http.NewRequest("POST", join(host, "/1/fileops/upload_file"), buf)
+	req, _ := http.NewRequest("POST", uri, buf)
 	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("Content-Type", w.FormDataContentType())
 //	req.Header.Set("Content-Length", strconv.Itoa(buf.Len()))
 	req.Header.Set("Connection", "Close")
 	req.Header.Set("User-Agent", "kpancli")
-
 	return req
 }
 
