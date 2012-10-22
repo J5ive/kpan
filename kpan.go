@@ -400,13 +400,14 @@ func (p *Kpan) Upload(pathname string, data []byte, overwrite bool) (res *Upload
 // 上传本地文件
 func (p *Kpan) UploadFile(remoteFile, localFile string, overwrite bool) (res *UploadResult, err error) {
 	f, err := os.Open(localFile)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
 	if err == nil {
-		defer f.Close()
-		fi, err := f.Stat()
-		if err == nil {
-			remoteFile = NameFromTo(localFile, remoteFile)
-			res, err = p.UploadFrom(remoteFile, f, int(fi.Size()), overwrite)
-		}
+		remoteFile = NameFromTo(localFile, remoteFile)
+		res, err = p.UploadFrom(remoteFile, f, int(fi.Size()), overwrite)
 	}
 	return
 }
