@@ -1,5 +1,5 @@
 // Copyright 2012 by J5ive. All rights reserved.
-// Use of this source code is governed by BSD license. 
+// Use of this source code is governed by BSD license.
 //
 // 金山快盘 (kuaipan) Go SDK
 //
@@ -9,12 +9,12 @@ package kpan
 
 import (
 	"bytes"
-	"strings"
-	"strconv"
-	"path"
-	"io/ioutil"
+	"io"
 	"mime/multipart"
 	"net/http"
+	"os"
+	"path"
+	"strconv"
 )
 
 type Kpan struct {
@@ -22,7 +22,7 @@ type Kpan struct {
 	UserId     int64
 	ChargedDir string
 	Root       string // app_folder or kuaipan
-	host       string // upload url
+	uri        string // upload url
 }
 
 // 进行 oauth 认证的第一步.
@@ -34,7 +34,7 @@ func (p *Kpan) Request(callback string) (callback_confirmed bool, err error) {
 		params["oauth_callback"] = callback
 	}
 	data := make(map[string]interface{})
-	err = p.GetJson(
+	err = p.ApiGet(
 		"https://openapi.kuaipan.cn/open/requestToken",
 		params,
 		&data)
@@ -55,7 +55,7 @@ func (p *Kpan) Access(verifier string) error {
 		params["oauth_verifier"] = verifier
 	}
 
-	err := p.GetJson(
+	err := p.ApiGet(
 		"https://openapi.kuaipan.cn/open/accessToken",
 		params,
 		&data)
@@ -82,7 +82,7 @@ type AccountInfo struct {
 // 查看用户信息
 func (p *Kpan) AccountInfo() (*AccountInfo, error) {
 	info := &AccountInfo{ QuotoRecycled: -1 }
-	err := p.GetJson("http://openapi.kuaipan.cn/1/account_info", nil, info)
+	err := p.ApiGet("http://openapi.kuaipan.cn/1/account_info", nil, info)
 	return info, err
 }
 
@@ -119,18 +119,11 @@ type FileInfo struct {
 // params: list, file_limit, page, page_size, filter_ext, sort_by
 func (p *Kpan) Metadata(pathname string, params map[string]string) (*DirInfo, error) {
 	info := &DirInfo{ Size: -1 }
-	err := p.GetJson(
-		"http://openapi.kuaipan.cn/1/metadata/" + p.Root + addSep(pathname),
+	err := p.ApiGet(
+		join("http://openapi.kuaipan.cn/1/metadata/" + p.Root, pathname),
 		params,
 		info)
 	return info, err
-}
-
-func addSep(pathname string) string {
-	if !strings.HasPrefix(pathname, "/") {
-		pathname = "/" + pathname
-	}
-	return pathname
 }
 
 
@@ -149,8 +142,8 @@ func (p *Kpan) Share(pathname, displayName, accessCode string) (*ShareInfo, erro
 		params["access_code"] = accessCode
 	}
 	res := new(ShareInfo)
-	err := p.GetJson(
-		"http://openapi.kuaipan.cn/1/shares/" + p.Root + addSep(pathname),
+	err := p.ApiGet(
+		join("http://openapi.kuaipan.cn/1/shares/" + p.Root, pathname),
 		params,
 		res)
 	return res, err
@@ -166,7 +159,7 @@ type CreateResult struct {
 // 新建文件夹
 func (p *Kpan) CreateFolder(pathname string) (*CreateResult, error) {
 	res := new(CreateResult)
-	err := p.GetJson(
+	err := p.ApiGet(
 		"http://openapi.kuaipan.cn/1/fileops/create_folder",
 		map[string]string{"path": pathname, "root": p.Root},
 		res)
@@ -175,26 +168,26 @@ func (p *Kpan) CreateFolder(pathname string) (*CreateResult, error) {
 
 // 删除文件，文件夹，以及文件夹下所有文件到回收站
 func (p *Kpan) Delete(pathname string, toRecycle bool) error {
-	_, err := p.Get(
+	return p.ApiGet(
 		"http://openapi.kuaipan.cn/1/fileops/delete",
 		map[string]string{
 			"path":       pathname,
 			"root":       p.Root,
 			"to_recycle": strconv.FormatBool(toRecycle),
-		})
-	return err
+		},
+		nil)
 }
 
 // 移动文件，文件夹
 func (p *Kpan) Move(fromPath, toPath string) error {
-	_, err := p.Get(
+	return p.ApiGet(
 		"http://openapi.kuaipan.cn/1/fileops/move",
 		map[string]string{
 			"from_path": fromPath,
 			"to_path":   toPath,
 			"root":      p.Root,
-		})
-	return err
+		},
+		nil)
 }
 
 // 复制文件，文件夹
@@ -209,8 +202,7 @@ func (p *Kpan) Copy(fromPath, toPath, copyRef string) error {
 	if copyRef != "" {
 		params["copy_ref"] = copyRef
 	}
-	_, err := p.Get("http://openapi.kuaipan.cn/1/fileops/copy", params)
-	return err
+	return p.ApiGet("http://openapi.kuaipan.cn/1/fileops/copy", params, nil)
 }
 
 
@@ -222,8 +214,8 @@ type CopyRefResult struct {
 // 产生一个复制引用（ref）
 func (p *Kpan) CopyRef(pathname string) (*CopyRefResult, error) {
 	res := new(CopyRefResult)
-	err := p.GetJson(
-		"http://openapi.kuaipan.cn/1/copy_ref/" + p.Root + addSep(pathname),
+	err := p.ApiGet(
+		join("http://openapi.kuaipan.cn/1/copy_ref/" + p.Root, pathname),
 		nil,
 		res)
 	return res, err
@@ -233,7 +225,7 @@ func (p *Kpan) CopyRef(pathname string) (*CopyRefResult, error) {
 // 下载
 // TODO: HTTP Range Retrieval Requests
 func (p *Kpan) Download(pathname string) ([]byte, error) {
-	return p.GetFile(
+	return p.ApiGetBytes(
 		"http://api-content.dfs.kuaipan.cn/1/fileops/download_file",
 		map[string]string{
 			"path": pathname,
@@ -241,24 +233,39 @@ func (p *Kpan) Download(pathname string) ([]byte, error) {
 		})
 }
 
+// 下载
+func (p *Kpan) DownloadTo(pathname string, w io.Writer) error {
+	return p.ApiGetFile(
+		"http://api-content.dfs.kuaipan.cn/1/fileops/download_file",
+		map[string]string{
+			"path": pathname,
+			"root": p.Root,
+		},
+		w)
+}
+
 // 下载文件并保存到本地
 func (p *Kpan) DownloadFile(remoteFile, localFile string) error {
-	if len(localFile) == 0 {
-		localFile = path.Base(remoteFile)
-	} else if localFile[len(localFile)-1] == '/' {
-		localFile = path.Join(localFile, path.Base(remoteFile))
+	f, err := os.Create(NameFromTo(remoteFile, localFile))
+	if err != nil {
+		return err
 	}
+	defer f.Close()
+	return p.DownloadTo(remoteFile, f)
+}
 
-	data, err := p.Download(remoteFile)
-	if err == nil {
-		err = ioutil.WriteFile(localFile, data, 0666)
+func NameFromTo(from, to string) string {
+	if len(to) == 0 {
+		to = path.Base(from)
+	} else if to[len(to)-1] == '/' {
+		to = path.Join(to, path.Base(from))
 	}
-	return err
+	return to
 }
 
 // 获取缩略图
-func (p *Kpan) Thumnail(pathname string, width, height int) ([]byte, error) {
-	return p.GetFile(
+func (p *Kpan) Thumnail(pathname string, width, height int, w io.Writer) ([]byte, error) {
+	return p.ApiGetBytes(
 		"http://conv.kuaipan.cn/1/fileops/thumbnail",
 		map[string]string{
 			"path":  pathname,
@@ -270,7 +277,7 @@ func (p *Kpan) Thumnail(pathname string, width, height int) ([]byte, error) {
 
 // 文档转换
 func (p *Kpan) DocumentView(pathname, typ, view string) ([]byte, error) {
-	return p.GetFile(
+	return p.ApiGetBytes(
 		"http://conv.kuaipan.cn/1/fileops/documentView",
 		map[string]string{
 			"path": pathname,
@@ -287,18 +294,34 @@ type upLocate struct {
 // 获取上传url (1st step of openapi)
 func (p *Kpan) UploadLocate() (string, error) {
 	var res upLocate
-	err := p.GetJson(
+	err := p.ApiGet(
 		"http://api-content.dfs.kuaipan.cn/1/fileops/upload_locate",
 		nil, &res)
-	return res.Url, err
+	return join(res.Url, "/1/fileops/upload_file"), err
 }
 
+func join(host, pathname string) string {
+	if len(host) == 0 || len(pathname) == 0 {
+		return host + pathname
+	}
+	if host[len(host)-1] == '/' {
+		if pathname[0] == '/' {
+			return host + pathname[1:]
+		} else {
+			return host + pathname
+		}
+	}
+	if pathname[0] == '/' {
+		return host + pathname
+	}
+	return host + "/" + pathname
+}
 
 type UploadResult struct {
 	FileId     string `json:"file_id"`
 	Type       string `json:"type"`
 	Rev        string `json:"rev"`
-	Size       int    `json:"size,string"`	// 文档中是int, 但实际返回 string 
+	Size       int    `json:"size,string"`	// 文档中是int, 但实际返回 string
 	// Stat string  `json:"stat"`	// 文档中无, 成功返回 OK
 	// Url string  `json:"url"`		// 文档中无
 
@@ -307,36 +330,28 @@ type UploadResult struct {
 	IsDeleted  bool   `json:"is_deleted"`
 }
 
-// 根据 UploadLocate 得到的 host url 上传 (2nd step of openapi)
-func (p *Kpan) UploadTo(host, pathname string, overwrite bool, data []byte) (res *UploadResult, err error) {
-	res = new(UploadResult)
-	uri := join(host, "/1/fileops/upload_file")
-	err = p.DoJson(
-		p.newUploadRequest(uri, pathname, data),
-		uri,
-		map[string]string{
-			"overwrite": btoa(overwrite),
-			"root":      p.Root,
-			"path":      pathname,
-		},
-		res)
-	return
-}
-
-func (p *Kpan) newUploadRequest(uri, pathname string, data []byte) *http.Request {
+// 根据 UploadLocate 得到的 url 上传 (2nd step of openapi)
+// 必须提供size, 否则返回411错误。
+func (p *Kpan) DoUpload(uri, pathname string, r io.Reader, size int, overwrite bool) (res *UploadResult, err error) {
 	buf := &bytes.Buffer{}
 	w := multipart.NewWriter(buf)
-	part, _ := w.CreateFormFile("file", pathname)
-	part.Write(data)
-	w.Close()
+	w.CreateFormFile("file", pathname)
 
-	req, _ := http.NewRequest("POST", uri, buf)
+	uri = p.MakeUrl("POST", uri, map[string]string{
+		"overwrite": btoa(overwrite),
+		"root":      p.Root,
+		"path":      pathname,
+	})
+	req, _ := http.NewRequest("POST", uri, io.MultiReader(buf, r, &partEnder{buf, w, false}))
+	req.ContentLength = int64(buf.Len() + size + len(w.Boundary()) + 8)
 	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("Content-Type", w.FormDataContentType())
-//	req.Header.Set("Content-Length", strconv.Itoa(buf.Len()))
-	req.Header.Set("Connection", "Close")
+//	req.Header.Set("Connection", "Close")
 	req.Header.Set("User-Agent", "kpancli")
-	return req
+
+	res = new(UploadResult)
+	err = httpDo(req, res)
+	return
 }
 
 func btoa(b bool) string {
@@ -346,42 +361,55 @@ func btoa(b bool) string {
 	return "False"
 }
 
-func join(host, pathname string) string {
-	if len(pathname) == 0 {
-		return host
-	}
-	if host[len(host)-1] != '/' {
-		return host + addSep(pathname)
-	}
-	if pathname[0] == '/' {
-		return host + pathname[1:]
-	}
-	return host + pathname
+
+type partEnder struct {
+	buf *bytes.Buffer
+	mw *multipart.Writer
+	closed bool
 }
 
+func (r *partEnder) Read(b []byte) (n int, err error) {
+	if r.closed {
+		return 0, io.EOF
+	}
+	r.closed = true
+	r.mw.Close()
+	return r.buf.Read(b)
+}
+
+
+
 // 上传
-func (p *Kpan) Upload(pathname string, overwrite bool, data []byte) (res *UploadResult, err error) {
-	if p.host == "" {
-		p.host, err = p.UploadLocate()
+// 必须提供size, 否则返回411错误。
+func (p *Kpan) UploadFrom(pathname string, r io.Reader, size int, overwrite bool) (res *UploadResult, err error) {
+	if p.uri == "" {
+		p.uri, err = p.UploadLocate()
 	}
 	if err == nil {
-		res, err = p.UploadTo(p.host, pathname, overwrite, data)
+		res, err = p.DoUpload(p.uri, pathname, r, size, overwrite)
 	}
 	return
 }
 
-// 上传本地文件
-func (p *Kpan) UploadFile(localFile, remoteFile string, overwrite bool) (*UploadResult, error) {
-	if len(remoteFile) == 0 {
-		remoteFile = path.Base(localFile)
-	} else if remoteFile[len(remoteFile)-1] == '/' {
-		remoteFile = path.Join(remoteFile, path.Base(localFile))
-	}
-
-	data, err := ioutil.ReadFile(localFile)
-	if err != nil {
-		return nil, err
-	}
-	return p.Upload(remoteFile, overwrite, data)
+// 上传
+func (p *Kpan) Upload(pathname string, data []byte, overwrite bool) (res *UploadResult, err error) {
+	r := bytes.NewReader(data)
+	return p.UploadFrom(pathname, r, len(data), overwrite)
 }
+
+// 上传本地文件
+func (p *Kpan) UploadFile(remoteFile, localFile string, overwrite bool) (res *UploadResult, err error) {
+	f, err := os.Open(localFile)
+	if err == nil {
+		defer f.Close()
+		fi, err := f.Stat()
+		if err == nil {
+			remoteFile = NameFromTo(localFile, remoteFile)
+			res, err = p.UploadFrom(remoteFile, f, int(fi.Size()), overwrite)
+		}
+	}
+	return
+}
+
+
 

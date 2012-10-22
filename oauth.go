@@ -1,26 +1,28 @@
 // Copyright 2012 by J5ive. All rights reserved.
-// Use of this source code is governed by BSD license. 
+// Use of this source code is governed by BSD license.
 //
 package kpan
 
 import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha1"
 	"errors"
+	"encoding/base64"
+	"encoding/json"
+	"io"
+	"io/ioutil"
 	"math/rand"
+	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
-	"crypto/hmac"
-	"crypto/sha1"
-	"encoding/base64"
-	"encoding/json"
-	"io/ioutil"
-	"net/http"
-	"net/url"
 )
 
 func init() {
-	rand.Seed(time.Now().Unix())
+	rand.Seed(time.Now().UnixNano())
 }
 
 
@@ -37,10 +39,123 @@ func (e *ErrorMsg) Error() string {
 	return e.Msg
 }
 
+// GET api operation
+func (t *Token) ApiGet(uri string, params map[string]string, obj interface{}) error {
+	return httpGet(t.MakeUrl("GET", uri, params), obj)
+}
+
+// GET api operation for download.
+func (t *Token) ApiGetFile(uri string, params map[string]string, w io.Writer) error {
+	return httpGetFile(t.MakeUrl("GET", uri, params), w)
+}
+
+// GET api operation for download.
+func (t *Token) ApiGetBytes(uri string, params map[string]string) ([]byte, error) {
+	buf := bytes.NewBuffer(make([]byte, 0, bytes.MinRead))
+	if err := httpGetFile(t.MakeUrl("GET", uri, params), buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func (t *Token) MakeUrl(httpMethod, uri string, params map[string]string) string {
+	if params == nil {
+		params = make(map[string]string)
+	}
+	params["oauth_signature_method"] = "HMAC-SHA1"
+	params["oauth_version"] = "1.0"
+	params["oauth_consumer_key"] = t.ConsumerKey
+	params["oauth_timestamp"] = strconv.FormatInt(time.Now().Unix(), 10)
+	params["oauth_nonce"] = nonce()
+	if t.Key != "" {
+		params["oauth_token"] = t.Key
+	}
+
+	query := encodeParams(params)
+	return uri +"?"+query+"&oauth_signature="+
+		urlEncode(t.sign(httpMethod, uri, query))
+}
+
+// For oauth_nonce
+func nonce() string {
+	return strconv.FormatInt(rand.Int63(), 10)
+}
+
+// oauth signature
+func (t *Token) sign(httpMethod, uri, params string) string {
+	base := httpMethod + "&" +
+		urlEncode(uri) + "&" +
+		urlEncode(params)
+	key := urlEncode(t.ConsumerSecret) + "&" + urlEncode(t.Secret)
+	hash := hmac.New(sha1.New, []byte(key))
+	hash.Write([]byte(base))
+	return base64.StdEncoding.EncodeToString(hash.Sum(nil))
+}
+
+func encodeParams(params map[string]string) string {
+	pairs := make([]string, len(params))
+	i := 0
+	for k, v := range params {
+		pairs[i] = urlEncode(k) + "=" + urlEncode(v)
+		i++
+	}
+
+	sort.Strings(pairs)
+	return strings.Join(pairs, "&")
+}
+
+
+func httpGet(uri string, obj interface{}) error {
+	resp, err := http.Get(uri)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	return readFormBody(resp, obj)
+}
+
+func httpDo(req *http.Request, obj interface{}) error {
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	return readFormBody(resp, obj)
+}
+
+
+func readFormBody(resp *http.Response, obj interface{}) (err error) {
+	if resp.StatusCode == 200 {
+		if obj == nil {
+			io.Copy(ioutil.Discard, resp.Body)
+		} else {
+			err = json.NewDecoder(resp.Body).Decode(obj)
+		}
+	} else {
+		msg := new(ErrorMsg)
+		if err = json.NewDecoder(resp.Body).Decode(msg); err == nil {
+			err = msg
+		} else {
+			err = errors.New(resp.Status)
+		}
+	}
+
+	return
+}
+
+
 // for download api
 type DownClient struct {
 	http.Client
 	cookies []*http.Cookie
+}
+
+func NewClient() *http.Client {
+	c := &DownClient{}
+	c.Jar = c
+	return &c.Client
 }
 
 func (c *DownClient) SetCookies(u *url.URL, cookies []*http.Cookie) {
@@ -51,84 +166,31 @@ func (c *DownClient) Cookies(u *url.URL) []*http.Cookie {
 	return c.cookies
 }
 
-// GET api operation.
-func (t *Token) Get(uri string, params map[string]string) ([]byte, error) {
-	if params == nil {
-		params = make(map[string]string)
-	}
-	t.Sign("GET", uri, params)
-	
-	// tr := &http.Transport{
-	//    TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	//}
-	// client := &http.Client{Transport: tr}
-	return t.httpGet(http.DefaultClient, uri, params)
-}
-
-// GET api operation for download.
-func (t *Token) GetFile(uri string, params map[string]string) ([]byte, error) {
-	if params == nil {
-		params = make(map[string]string)
-	}
-	t.Sign("GET", uri, params)
-	
+func httpGetFile(uri string, w io.Writer) error {
 	client := DownClient{}
 	client.Jar = &client
-	return t.httpGet(&client.Client, uri, params)
-}
-
-// GET api operation for json object
-func (t *Token) GetJson(uri string, params map[string]string, obj interface{}) error {
-	if params == nil {
-		params = make(map[string]string)
+	res, err := client.Get(uri)
+	if err == nil {
+		defer res.Body.Close()
+		if res.StatusCode == 200 {
+			_, err = io.Copy(w, res.Body)
+		} else {
+			err = readFormBody(res, nil)
+		}
 	}
-	t.Sign("GET", uri, params)
-	return t.httpGetJson(uri, params, obj)
+	return err
 }
 
-// specail api operation, for upload
-func (t *Token) DoJson(req *http.Request, uri string, params map[string]string, obj interface{}) error {
-	if params == nil {
-		params = make(map[string]string)
-	}
-	t.Sign(req.Method, uri, params)
-	return t.httpDoJson(req, params, obj)
-}
-
-// oauth signature
-func (t *Token) Sign(httpMethod, uri string, params map[string]string) {
-	params["oauth_signature_method"] = "HMAC-SHA1"
-	params["oauth_version"] = "1.0"
-	params["oauth_consumer_key"] = t.ConsumerKey
-	params["oauth_timestamp"] = strconv.FormatInt(time.Now().Unix(), 10)
-	params["oauth_nonce"] = nonce()
-	if t.Key != "" {
-		params["oauth_token"] = t.Key
-	}
-
-	params["oauth_signature"] = t.getSign(httpMethod, uri, params)
-}
-
-func (t *Token) getSign(httpMethod, uri string, params map[string]string) string {
-	base := httpMethod + "&" +
-		urlEncode(uri) + "&" +
-		urlEncode(encodeParams(params, true))
-
-	key := urlEncode(t.ConsumerSecret) + "&" + urlEncode(t.Secret)
-	hash := hmac.New(sha1.New, []byte(key))
-	hash.Write([]byte(base))
-	return base64.StdEncoding.EncodeToString(hash.Sum(nil))
-}
-
-// For oauth_nonce
-func nonce() string {
-	return strconv.FormatInt(rand.Int63(), 10)
-}
+const xdigit = "0123456789ABCDEF"
 
 // urlEncode percent-encodes a string as defined in RFC 3986.
+// 注意：对空格处理与 url.QueryEscape 不同
 func urlEncode(s string) string {
-	xdigit := "0123456789ABCDEF"
-	b := make([]byte, 0, len(s))
+	n := encodeCount(s)
+	if n == len(s) {
+		return s
+	}
+	b := make([]byte, 0, n)
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if isEncodable(c) {
@@ -138,6 +200,17 @@ func urlEncode(s string) string {
 		}
 	}
 	return string(b)
+}
+
+func encodeCount(s string) (n int) {
+	for i := 0; i < len(s); i++ {
+		if isEncodable(s[i]) {
+			n += 3
+		} else {
+			n++
+		}
+	}
+	return
 }
 
 // isEncodable returns true if a given character should be percent-encoded
@@ -153,77 +226,3 @@ func isEncodable(c byte) bool {
 		c == '~')
 }
 
-
-func (t *Token) httpGet(client *http.Client, uri string, params map[string]string) ([]byte, error) {
-	res, err := client.Get(uri + "?" + encodeParams(params, false))
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	data, err := ioutil.ReadAll(res.Body)
-	if res.StatusCode != 200 {
-		if data != nil {
-			err = errors.New(string(data))
-		} else {
-			err = errors.New(res.Status)
-		}
-	}
-	return data, err
-}
-
-func (t *Token) httpGetJson(uri string, params map[string]string, obj interface{}) error {
-	resp, err := http.Get(uri + "?" + encodeParams(params, false))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	return readFormBody(resp, obj)
-}
-
-func (t *Token) httpDoJson(req *http.Request, params map[string]string, obj interface{}) error {
-	req.URL.RawQuery = encodeParams(params, false)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	return readFormBody(resp, obj)
-}
-
-func encodeParams(params map[string]string, sorted bool) string {
-	pairs := make([]string, len(params))
-	i := 0
-	for k, v := range params {
-		pairs[i] = urlEncode(k) + "=" + urlEncode(v)
-		i++
-	}
-
-	if sorted {
-		sort.Strings(pairs)
-	}
-	return strings.Join(pairs, "&")
-}
-
-func readFormBody(resp *http.Response, obj interface{}) error {
-	data, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	// println(string(data))
-
-	if resp.StatusCode != 200 {
-		msg := new(ErrorMsg)
-		if err = json.Unmarshal(data, msg); err == nil {
-			err = msg
-		} else {
-			err = errors.New(resp.Status)
-		}
-	} else if err == nil {
-		err = json.Unmarshal(data, obj)
-	}
-
-	return err
-}
