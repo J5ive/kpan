@@ -1,6 +1,6 @@
 // Copyright 2012 by J5ive. All rights reserved.
 // Use of this source code is governed by BSD license.
-//
+
 package kpan
 
 import (
@@ -181,19 +181,27 @@ func httpGetFile(uri string, w io.Writer) error {
 	return err
 }
 
-const xdigit = "0123456789ABCDEF"
-
 // urlEncode percent-encodes a string as defined in RFC 3986.
 // 注意：对空格处理与 url.QueryEscape 不同
 func urlEncode(s string) string {
-	n := encodeCount(s)
+	return escape(s, 0)
+}
+
+func pathEncode(s string) string {
+	return escape(s, '/')
+}
+
+const xdigit = "0123456789ABCDEF"
+
+func escape(s string, special byte) string {
+	n := encodeCount(s, special)
 	if n == len(s) {
 		return s
 	}
 	b := make([]byte, 0, n)
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if isEncodable(c) {
+		if isEncodable(c, special) {
 			b = append(b, '%', xdigit[c>>4], xdigit[c&15])
 		} else {
 			b = append(b, c)
@@ -202,9 +210,9 @@ func urlEncode(s string) string {
 	return string(b)
 }
 
-func encodeCount(s string) (n int) {
+func encodeCount(s string, special byte) (n int) {
 	for i := 0; i < len(s); i++ {
-		if isEncodable(s[i]) {
+		if isEncodable(s[i], special) {
 			n += 3
 		} else {
 			n++
@@ -215,7 +223,7 @@ func encodeCount(s string) (n int) {
 
 // isEncodable returns true if a given character should be percent-encoded
 // according to RFC 3986.
-func isEncodable(c byte) bool {
+func isEncodable(c byte, special byte) bool {
 	// return false if c is an unreserved character (see RFC 3986 section 2.3)
 	return !((c >= 'A' && c <= 'Z') ||
 		(c >= 'a' && c <= 'z') ||
@@ -223,6 +231,7 @@ func isEncodable(c byte) bool {
 		c == '-' ||
 		c == '.' ||
 		c == '_' ||
-		c == '~')
+		c == '~' ||
+		c == special)
 }
 

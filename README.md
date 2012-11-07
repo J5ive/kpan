@@ -44,7 +44,7 @@ See <http://www.kuaipan.cn/developers/document.htm>
 
 **上传文件：**
 
-	Kpan.Upload("/123.txt", true, []byte{"123456"})
+	Kpan.Upload("/123.txt", []byte{"123456"}, true)
 
 则在快盘中增加了文件 123.txt, 内容为 123456.
 

@@ -1,5 +1,6 @@
 // Copyright 2012 by J5ive. All rights reserved.
 // Use of this source code is governed by BSD license.
+
 //
 // 金山快盘 (kuaipan) Go SDK
 //
@@ -120,7 +121,7 @@ type FileInfo struct {
 func (p *Kpan) Metadata(pathname string, params map[string]string) (*DirInfo, error) {
 	info := &DirInfo{ Size: -1 }
 	err := p.ApiGet(
-		join("http://openapi.kuaipan.cn/1/metadata/" + p.Root, pathname),
+		join("http://openapi.kuaipan.cn/1/metadata/" + p.Root, pathEncode(pathname)),
 		params,
 		info)
 	return info, err
@@ -143,7 +144,7 @@ func (p *Kpan) Share(pathname, displayName, accessCode string) (*ShareInfo, erro
 	}
 	res := new(ShareInfo)
 	err := p.ApiGet(
-		join("http://openapi.kuaipan.cn/1/shares/" + p.Root, pathname),
+		join("http://openapi.kuaipan.cn/1/shares/" + p.Root, pathEncode(pathname)),
 		params,
 		res)
 	return res, err
@@ -215,7 +216,7 @@ type CopyRefResult struct {
 func (p *Kpan) CopyRef(pathname string) (*CopyRefResult, error) {
 	res := new(CopyRefResult)
 	err := p.ApiGet(
-		join("http://openapi.kuaipan.cn/1/copy_ref/" + p.Root, pathname),
+		join("http://openapi.kuaipan.cn/1/copy_ref/" + p.Root, pathEncode(pathname)),
 		nil,
 		res)
 	return res, err
